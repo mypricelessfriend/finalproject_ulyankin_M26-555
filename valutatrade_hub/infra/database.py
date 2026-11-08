@@ -1,4 +1,5 @@
 """Singleton DatabaseManager: абстракция над JSON-хранилищем."""
+
 from __future__ import annotations
 
 import json

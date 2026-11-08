@@ -1,4 +1,5 @@
 """Настройка логов (формат, уровень, ротация)."""
+
 from __future__ import annotations
 
 import json
@@ -13,9 +14,18 @@ LOGGER_NAME = "valutatrade"
 _logger: Optional[logging.Logger] = None
 
 _EXTRA_FIELDS = (
-    "action", "user_id", "username", "currency_code",
-    "amount", "rate", "base", "result",
-    "error_type", "error_message", "before", "after",
+    "action",
+    "user_id",
+    "username",
+    "currency_code",
+    "amount",
+    "rate",
+    "base",
+    "result",
+    "error_type",
+    "error_message",
+    "before",
+    "after",
 )
 
 

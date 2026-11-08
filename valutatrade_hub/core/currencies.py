@@ -1,4 +1,5 @@
 """Иерархия валют: Currency (ABC) → FiatCurrency / CryptoCurrency + реестр."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -59,10 +60,7 @@ class FiatCurrency(Currency):
         self.issuing_country = issuing_country
 
     def get_display_info(self) -> str:
-        return (
-            f"[FIAT] {self.code} — {self.name} "
-            f"(Issuing: {self.issuing_country})"
-        )
+        return f"[FIAT] {self.code} — {self.name} (Issuing: {self.issuing_country})"
 
 
 class CryptoCurrency(Currency):

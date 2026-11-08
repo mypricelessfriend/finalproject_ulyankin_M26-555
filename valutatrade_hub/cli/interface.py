@@ -1,4 +1,5 @@
 """CLI ValutaTrade Hub. Единственная точка входа для команд."""
+
 from __future__ import annotations
 
 import argparse
@@ -8,6 +9,12 @@ import sys
 from prettytable import PrettyTable
 
 from ..core import usecases
+from ..core.exceptions import (
+    ApiRequestError,
+    CurrencyNotFoundError,
+    InsufficientFundsError,
+    ValutaTradeError,
+)
 from ..core.models import User
 
 
@@ -25,7 +32,6 @@ def _require_login() -> User:
 
 
 def _fmt_rate(rate: float) -> str:
-    """Форматирует курс так, как в примерах ТЗ (без научной нотации)."""
     if rate == 0:
         return "0"
     if rate < 0.001:
@@ -33,6 +39,17 @@ def _fmt_rate(rate: float) -> str:
     if rate < 1:
         return f"{rate:.6f}".rstrip("0").rstrip(".")
     return f"{rate:.4f}".rstrip("0").rstrip(".")
+
+
+def _print_currency_not_found(exc: CurrencyNotFoundError, hint: str = "get-rate") -> None:
+    supported = ", ".join(usecases.known_currencies())
+    print(exc)
+    print(f"Подсказка: help {hint}; поддерживаемые коды: {supported}")
+
+
+def _print_api_error(exc: ApiRequestError) -> None:
+    print(exc)
+    print("Повторите попытку позже или проверьте сетевое подключение.")
 
 
 # команды
@@ -64,8 +81,12 @@ def cmd_show_portfolio(args: argparse.Namespace) -> None:
         return
 
     base = (args.base or "USD").upper()
-    if not usecases.is_known_currency(base):
-        print(f"Неизвестная базовая валюта '{base}'")
+    try:
+        from ..core.currencies import get_currency
+
+        get_currency(base)
+    except CurrencyNotFoundError as exc:
+        _print_currency_not_found(exc, hint="show-portfolio")
         return
 
     portfolio = usecases.load_portfolio(user)
@@ -77,7 +98,7 @@ def cmd_show_portfolio(args: argparse.Namespace) -> None:
     def rate_getter(code: str, base_cur: str):
         try:
             return usecases.get_rate(code, base_cur)[0]
-        except LookupError:
+        except (CurrencyNotFoundError, ApiRequestError):
             return None
 
     table = PrettyTable()
@@ -88,9 +109,7 @@ def cmd_show_portfolio(args: argparse.Namespace) -> None:
         if rate is None:
             table.add_row([code, f"{wallet.balance:.4f}", "—"])
         else:
-            table.add_row(
-                [code, f"{wallet.balance:.4f}", f"{wallet.balance * rate:,.2f}"]
-            )
+            table.add_row([code, f"{wallet.balance:.4f}", f"{wallet.balance * rate:,.2f}"])
 
     print(f"Портфель пользователя '{user.username}' (база: {base}):")
     print(table)
@@ -106,7 +125,16 @@ def cmd_buy(args: argparse.Namespace) -> None:
     try:
         user = _require_login()
         res = usecases.buy_currency(user, args.currency, args.amount)
-    except (PermissionError, ValueError, TypeError) as exc:
+    except PermissionError as exc:
+        print(exc)
+        return
+    except CurrencyNotFoundError as exc:
+        _print_currency_not_found(exc, hint="buy")
+        return
+    except ApiRequestError as exc:
+        _print_api_error(exc)
+        return
+    except (ValueError, TypeError) as exc:
         print(exc)
         return
 
@@ -120,10 +148,7 @@ def cmd_buy(args: argparse.Namespace) -> None:
         print(f"Не удалось получить курс для {res['currency']}→USD")
 
     print("Изменения в портфеле:")
-    print(
-        f"- {res['currency']}: было {res['before']:.4f} → стало {res['after']:.4f}"
-    )
-
+    print(f"- {res['currency']}: было {res['before']:.4f} → стало {res['after']:.4f}")
     if res["cost_usd"] is not None:
         print(f"Оценочная стоимость покупки: {res['cost_usd']:,.2f} USD")
     if res["usd_charged"] is not None:
@@ -133,13 +158,27 @@ def cmd_buy(args: argparse.Namespace) -> None:
 def cmd_sell(args: argparse.Namespace) -> None:
     try:
         user = _require_login()
-        res = usecases.sell_currency(
-            user, args.currency, args.amount, skip_confirm=args.yes
-        )
-    except (PermissionError, ValueError, TypeError) as exc:
+        res = usecases.sell_currency(user, args.currency, args.amount, skip_confirm=args.yes)
+    except PermissionError as exc:
         print(exc)
         return
-    if res is None:  # отменено confirm_action
+    except CurrencyNotFoundError as exc:
+        _print_currency_not_found(exc, hint="sell")
+        return
+    except InsufficientFundsError as exc:
+        print(exc)
+        return
+    except ApiRequestError as exc:
+        _print_api_error(exc)
+        return
+    except (ValueError, TypeError) as exc:
+        print(exc)
+        return
+    except ValutaTradeError as exc:
+        print(exc)
+        return
+
+    if res is None:
         return
 
     if res["rate"] is not None:
@@ -152,10 +191,7 @@ def cmd_sell(args: argparse.Namespace) -> None:
         print(f"Не удалось получить курс для {res['currency']}→USD")
 
     print("Изменения в портфеле:")
-    print(
-        f"- {res['currency']}: было {res['before']:.4f} → стало {res['after']:.4f}"
-    )
-
+    print(f"- {res['currency']}: было {res['before']:.4f} → стало {res['after']:.4f}")
     if res["revenue_usd"] is not None:
         print(f"Оценочная выручка: {res['revenue_usd']:,.2f} USD")
     if res["usd_credited"] is not None:
@@ -166,17 +202,21 @@ def cmd_get_rate(args: argparse.Namespace) -> None:
     try:
         frm, to = args.from_.upper(), args.to.upper()
         rate, ts = usecases.get_rate(frm, to)
-    except (ValueError, LookupError) as exc:
+    except CurrencyNotFoundError as exc:
+        _print_currency_not_found(exc, hint="get-rate")
+        return
+    except ApiRequestError as exc:
+        _print_api_error(exc)
+        return
+    except ValueError as exc:
         print(exc)
         return
-    print(
-        f"Курс {frm}→{to}: {_fmt_rate(rate)} "
-        f"(обновлено: {ts.strftime('%Y-%m-%d %H:%M:%S')})"
-    )
+
+    print(f"Курс {frm}→{to}: {_fmt_rate(rate)} (обновлено: {ts.strftime('%Y-%m-%d %H:%M:%S')})")
     try:
         reverse, _ = usecases.get_rate(to, frm)
         print(f"Обратный курс {to}→{frm}: {_fmt_rate(reverse)}")
-    except LookupError:
+    except (CurrencyNotFoundError, ApiRequestError):
         pass
 
 
@@ -265,6 +305,9 @@ def interactive_loop() -> None:
 
 
 def main() -> None:
+    from ..logging_config import setup_logging
+
+    setup_logging()
     if len(sys.argv) > 1:
         run_argv(sys.argv[1:])
     else:

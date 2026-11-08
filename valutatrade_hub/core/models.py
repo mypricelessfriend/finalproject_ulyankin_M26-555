@@ -1,4 +1,5 @@
 """Доменные классы: User, Wallet, Portfolio."""
+
 from __future__ import annotations
 
 from datetime import datetime

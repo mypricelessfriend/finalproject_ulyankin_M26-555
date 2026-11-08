@@ -1,4 +1,5 @@
 """Декоратор @log_action для доменных операций."""
+
 from __future__ import annotations
 
 import functools
@@ -107,11 +108,16 @@ def log_action(
                 result = f(*args, **kwargs)
             except Exception as exc:
                 msg = _format_message(action_name, ctx, "ERROR", exc)
-                logger.error(msg, extra={"action": action_name,
-                                         "result": "ERROR",
-                                         "error_type": type(exc).__name__,
-                                         "error_message": str(exc),
-                                         **ctx})
+                logger.error(
+                    msg,
+                    extra={
+                        "action": action_name,
+                        "result": "ERROR",
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                        **ctx,
+                    },
+                )
                 raise
 
             extra: dict[str, Any] = {"action": action_name, "result": "OK", **ctx}
@@ -135,4 +141,5 @@ def log_action(
 def _make_named(name: str, verbose: bool) -> Callable:
     def decorator(f: Callable) -> Callable:
         return log_action(f, action=name, verbose=verbose)
+
     return decorator

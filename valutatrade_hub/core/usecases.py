@@ -1,4 +1,5 @@
 """Бизнес-логика: регистрация, аутентификация, портфель, курсы, buy/sell."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -89,7 +90,7 @@ def authenticate(username: str, password: str) -> User:
     return user
 
 
-# portfolio 
+# portfolio
 def load_portfolio(user: User) -> Portfolio:
     portfolios = _db().load(PORTFOLIOS_FILE, [])
     for row in portfolios:
@@ -107,10 +108,7 @@ def load_portfolio(user: User) -> Portfolio:
 def save_portfolio(portfolio: Portfolio) -> None:
     payload = {
         "user_id": portfolio.user_id,
-        "wallets": {
-            code: {"balance": w.balance}
-            for code, w in portfolio.wallets.items()
-        },
+        "wallets": {code: {"balance": w.balance} for code, w in portfolio.wallets.items()},
     }
 
     def _updater(data: list[dict]) -> list[dict]:

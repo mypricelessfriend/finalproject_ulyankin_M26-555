@@ -1,4 +1,5 @@
 """Пользовательские исключения ValutaTrade Hub."""
+
 from __future__ import annotations
 
 

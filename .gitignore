@@ -5,5 +5,7 @@ dist/
 build/
 *.egg-info/
 .ruff_cache/
+logs/
 data/*.json
+data/config.json
 .pytest_cache/
