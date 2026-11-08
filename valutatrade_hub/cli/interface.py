@@ -1,5 +1,4 @@
 """CLI ValutaTrade Hub. Единственная точка входа для команд."""
-
 from __future__ import annotations
 
 import argparse
@@ -25,6 +24,19 @@ class _Session:
 
 
 _session = _Session()
+SESSION_FILE = "session.json"
+
+
+def _save_session(user_id: int) -> None:
+    DatabaseManager().save(SESSION_FILE, {"user_id": user_id})
+
+
+def _load_session() -> None:
+    data = DatabaseManager().load(SESSION_FILE, {})
+    if isinstance(data, dict) and "user_id" in data:
+        user = usecases._find_user_by_id(data["user_id"])
+        if user:
+            _session.user = user
 
 
 def _require_login() -> User:
@@ -70,9 +82,16 @@ def cmd_login(args: argparse.Namespace) -> None:
     try:
         user = usecases.authenticate(args.username, args.password)
         _session.user = user
+        _save_session(user.user_id)
         print(f"Вы вошли как '{user.username}'")
     except ValueError as exc:
         print(exc)
+
+
+def cmd_logout(args: argparse.Namespace) -> None:
+    _session.user = None
+    DatabaseManager().save(SESSION_FILE, {})
+    print("Вы вышли из системы.")
 
 
 def cmd_show_portfolio(args: argparse.Namespace) -> None:
@@ -109,7 +128,9 @@ def cmd_show_portfolio(args: argparse.Namespace) -> None:
         if rate is None:
             table.add_row([code, f"{wallet.balance:.4f}", "—"])
         else:
-            table.add_row([code, f"{wallet.balance:.4f}", f"{wallet.balance * rate:,.2f}"])
+            table.add_row(
+                [code, f"{wallet.balance:.4f}", f"{wallet.balance * rate:,.2f}"]
+            )
 
     print(f"Портфель пользователя '{user.username}' (база: {base}):")
     print(table)
@@ -221,7 +242,10 @@ def cmd_get_rate(args: argparse.Namespace) -> None:
         print(exc)
         return
 
-    print(f"Курс {frm}→{to}: {_fmt_rate(rate)} (обновлено: {ts.strftime('%Y-%m-%d %H:%M:%S')})")
+    print(
+        f"Курс {frm}→{to}: {_fmt_rate(rate)} "
+        f"(обновлено: {ts.strftime('%Y-%m-%d %H:%M:%S')})"
+    )
     try:
         reverse, _ = usecases.get_rate(to, frm)
         print(f"Обратный курс {to}→{frm}: {_fmt_rate(reverse)}")
@@ -231,7 +255,6 @@ def cmd_get_rate(args: argparse.Namespace) -> None:
 
 # Parser Service команды
 def cmd_update_rates(args: argparse.Namespace) -> None:
-    # локальный импорт — чтобы не тянуть requests при простых командах
     from ..parser_service.config import ParserConfig
     from ..parser_service.storage import ParserStorage
     from ..parser_service.updater import RatesUpdater
@@ -270,18 +293,24 @@ def cmd_show_rates(args: argparse.Namespace) -> None:
         raw = {}
     pairs = raw.get("pairs")
     if not isinstance(pairs, dict):
-        pairs = {k: v for k, v in raw.items() if isinstance(v, dict) and "rate" in v}
+        pairs = {
+            k: v for k, v in raw.items() if isinstance(v, dict) and "rate" in v
+        }
     last_refresh = raw.get("last_refresh") or "—"
 
     if not pairs:
-        print("Локальный кеш курсов пуст. Выполните 'update-rates', чтобы загрузить данные.")
+        print(
+            "Локальный кеш курсов пуст. "
+            "Выполните 'update-rates', чтобы загрузить данные."
+        )
         return
 
-    # фильтрация
     selected: list[tuple[str, dict]] = list(pairs.items())
     if args.currency:
         code = args.currency.upper()
-        selected = [(k, v) for k, v in selected if code in k.split("_")]
+        selected = [
+            (k, v) for k, v in selected if code in k.split("_")
+        ]
         if not selected:
             print(f"Курс для '{code}' не найден в кеше.")
             return
@@ -316,6 +345,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--password", required=True)
     p.set_defaults(func=cmd_login)
 
+    p = sub.add_parser("logout", help="выйти из системы")
+    p.set_defaults(func=cmd_logout)
+
     p = sub.add_parser("show-portfolio", help="показать портфель")
     p.add_argument("--base", default="USD", help="базовая валюта (по умолчанию USD)")
     p.set_defaults(func=cmd_show_portfolio)
@@ -336,8 +368,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--to", required=True)
     p.set_defaults(func=cmd_get_rate)
 
-    # Parser Service
-    p = sub.add_parser("update-rates", help="обновить курсы из внешних API (Parser Service)")
+    p = sub.add_parser(
+        "update-rates", help="обновить курсы из внешних API (Parser Service)"
+    )
     p.add_argument(
         "--source",
         choices=["coingecko", "exchangerate"],
@@ -357,6 +390,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 # точка входа
 def run_argv(argv: list[str]) -> None:
+    _load_session()
     parser = build_parser()
     try:
         args = parser.parse_args(argv)
@@ -379,8 +413,9 @@ def run_command(line: str) -> None:
 
 
 def interactive_loop() -> None:
+    _load_session()
     print(
-        "ValutaTrade Hub CLI. Команды: register, login, show-portfolio, "
+        "ValutaTrade Hub CLI. Команды: register, login, logout, show-portfolio, "
         "buy, sell, get-rate, update-rates, show-rates. "
         "'help' — справка, 'exit' — выход."
     )
@@ -402,7 +437,6 @@ def interactive_loop() -> None:
 
 def main() -> None:
     from ..logging_config import setup_logging, setup_parser_logging
-
     setup_logging()
     setup_parser_logging()
     if len(sys.argv) > 1:
