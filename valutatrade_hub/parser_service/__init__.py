@@ -1,4 +1,5 @@
 """Parser Service: сбор курсов валют из внешних API."""
+
 from .api_clients import BaseApiClient, CoinGeckoClient, ExchangeRateApiClient
 from .config import ParserConfig
 from .scheduler import RatesScheduler

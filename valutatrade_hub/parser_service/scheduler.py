@@ -1,9 +1,9 @@
 """Простой планировщик периодического обновления курсов."""
+
 from __future__ import annotations
 
 import threading
 import time
-from typing import Optional
 
 from valutatrade_hub.logging_config import get_parser_logger
 
@@ -21,14 +21,14 @@ class RatesScheduler:
         self,
         updater: RatesUpdater,
         interval_seconds: int = 300,
-        source: Optional[str] = None,
+        source: str | None = None,
     ) -> None:
         self.updater = updater
         self.interval_seconds = max(1, int(interval_seconds))
         self.source = source
         self.logger = get_parser_logger()
         self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     def run_once(self) -> dict:
         return self.updater.run_update(source=self.source)
@@ -37,9 +37,7 @@ class RatesScheduler:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._thread = threading.Thread(
-            target=self._loop, name="RatesScheduler", daemon=True
-        )
+        self._thread = threading.Thread(target=self._loop, name="RatesScheduler", daemon=True)
         self._thread.start()
         self.logger.info(
             "Scheduler started (every %ss, source=%s)",

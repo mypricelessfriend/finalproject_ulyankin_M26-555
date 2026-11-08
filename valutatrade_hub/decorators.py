@@ -1,9 +1,11 @@
 """Декоратор @log_action для доменных операций."""
+
 from __future__ import annotations
 
 import functools
 import inspect
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from .logging_config import get_logger
 
@@ -16,10 +18,11 @@ def _get_sig(func: Callable) -> inspect.Signature:
     return _SIG_CACHE[func]
 
 
-def _resolve_username(user_id: int) -> Optional[str]:
+def _resolve_username(user_id: int) -> str | None:
     """Ленивая попытка достать username по user_id (без циклических импортов)."""
     try:
         from .core.usecases import _find_user_by_id
+
         user_obj = _find_user_by_id(int(user_id))
         return user_obj.username if user_obj else None
     except Exception:
@@ -87,8 +90,8 @@ def _format_message(
     action: str,
     ctx: dict[str, Any],
     result: str,
-    exc: Optional[BaseException] = None,
-    verbose_extra: Optional[dict[str, Any]] = None,
+    exc: BaseException | None = None,
+    verbose_extra: dict[str, Any] | None = None,
 ) -> str:
     parts = [action]
     if ctx.get("username"):
@@ -118,9 +121,9 @@ def _format_message(
 
 
 def log_action(
-    func: Optional[Callable] = None,
+    func: Callable | None = None,
     *,
-    action: Optional[str] = None,
+    action: str | None = None,
     verbose: bool = False,
 ) -> Callable:
     """
@@ -194,4 +197,5 @@ def log_action(
 def _make_named(name: str, verbose: bool) -> Callable:
     def decorator(f: Callable) -> Callable:
         return log_action(f, action=name, verbose=verbose)
+
     return decorator

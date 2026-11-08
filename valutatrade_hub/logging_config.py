@@ -1,11 +1,11 @@
 """Настройка логов (формат, уровень, ротация) для actions и parser."""
+
 from __future__ import annotations
 
 import json
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
 
 from .infra.settings import SettingsLoader
 
@@ -14,13 +14,22 @@ PARSER_LOGGER_NAME = "valutatrade.parser"
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-_action_logger: Optional[logging.Logger] = None
-_parser_logger: Optional[logging.Logger] = None
+_action_logger: logging.Logger | None = None
+_parser_logger: logging.Logger | None = None
 
 _EXTRA_FIELDS = (
-    "action", "user_id", "username", "currency_code",
-    "amount", "rate", "base", "result",
-    "error_type", "error_message", "before", "after",
+    "action",
+    "user_id",
+    "username",
+    "currency_code",
+    "amount",
+    "rate",
+    "base",
+    "result",
+    "error_type",
+    "error_message",
+    "before",
+    "after",
 )
 
 

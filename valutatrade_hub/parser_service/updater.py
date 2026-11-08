@@ -1,8 +1,9 @@
 """RatesUpdater: оркестрация опроса клиентов, объединение, сохранение."""
+
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, timezone
-from typing import Iterable, Optional
 
 from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.logging_config import get_parser_logger
@@ -17,11 +18,7 @@ from .storage import ParserStorage
 
 
 def _now_iso_z() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .strftime("%Y-%m-%dT%H:%M:%SZ")
-    )
+    return datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _record_id(from_code: str, to_code: str, ts: str) -> str:
@@ -35,18 +32,19 @@ class RatesUpdater:
         self,
         config: ParserConfig,
         storage: ParserStorage,
-        clients: Optional[Iterable[BaseApiClient]] = None,
+        clients: Iterable[BaseApiClient] | None = None,
     ) -> None:
         self.config = config
         self.storage = storage
         self.clients: list[BaseApiClient] = (
-            list(clients) if clients is not None
+            list(clients)
+            if clients is not None
             else [CoinGeckoClient(config), ExchangeRateApiClient(config)]
         )
         self.logger = get_parser_logger()
 
     # -------------------- public --------------------
-    def run_update(self, source: Optional[str] = None) -> dict:
+    def run_update(self, source: str | None = None) -> dict:
         """
         Опросить клиентов (опционально — только source),
         сохранить историю и обновить кэш.
@@ -81,15 +79,11 @@ class RatesUpdater:
                 errors.append({"source": client.SOURCE, "error": str(exc)})
                 continue
             except Exception as exc:  # неожиданные — тоже не валим весь процесс
-                self.logger.exception(
-                    "Unexpected error from %s: %s", client.SOURCE, exc
-                )
+                self.logger.exception("Unexpected error from %s: %s", client.SOURCE, exc)
                 errors.append({"source": client.SOURCE, "error": str(exc)})
                 continue
 
-            self.logger.info(
-                "Fetching from %s... OK (%d rates)", client.SOURCE, len(rates)
-            )
+            self.logger.info("Fetching from %s... OK (%d rates)", client.SOURCE, len(rates))
             for key, rate in rates.items():
                 merged[key] = rate
                 per_source_meta[key] = {
@@ -132,7 +126,7 @@ class RatesUpdater:
         }
 
     # -------------------- internals --------------------
-    def _select_clients(self, source: Optional[str]) -> list[BaseApiClient]:
+    def _select_clients(self, source: str | None) -> list[BaseApiClient]:
         if not source:
             return self.clients
         key = source.strip().lower()
@@ -142,7 +136,7 @@ class RatesUpdater:
         return selected
 
     @staticmethod
-    def _raw_id_for(client: BaseApiClient, pair_key: str) -> Optional[str]:
+    def _raw_id_for(client: BaseApiClient, pair_key: str) -> str | None:
         # pair_key = 'BTC_USD'; для CoinGecko вернём 'bitcoin'
         if isinstance(client, CoinGeckoClient):
             from_code = pair_key.split("_", 1)[0]

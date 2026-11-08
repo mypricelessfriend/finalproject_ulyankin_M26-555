@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, Optional
 
 from .currencies import Currency, get_currency
 from .exceptions import InsufficientFundsError
@@ -92,14 +91,14 @@ class User:
         }
 
     @classmethod
-    def create(cls, user_id: int, username: str, password: str) -> "User":
+    def create(cls, user_id: int, username: str, password: str) -> User:
         if not isinstance(password, str) or len(password) < 4:
             raise ValueError("Пароль должен быть не короче 4 символов")
         salt = new_salt()
         return cls(user_id, username, hash_password(password, salt), salt, datetime.now())
 
     @classmethod
-    def from_dict(cls, data: dict) -> "User":
+    def from_dict(cls, data: dict) -> User:
         return cls(
             data["user_id"],
             data["username"],
@@ -156,7 +155,7 @@ class Wallet:
         return {"currency_code": self.currency_code, "balance": self._balance}
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Wallet":
+    def from_dict(cls, data: dict) -> Wallet:
         return cls(data["currency_code"], data.get("balance", 0.0))
 
     @staticmethod
@@ -174,23 +173,23 @@ class Portfolio:
     def __init__(
         self,
         user_id: int,
-        wallets: Optional[Dict[str, Wallet]] = None,
-        user: Optional[User] = None,
+        wallets: dict[str, Wallet] | None = None,
+        user: User | None = None,
     ) -> None:
         self._user_id: int = int(user_id)
-        self._wallets: Dict[str, Wallet] = dict(wallets or {})
-        self._user: Optional[User] = user
+        self._wallets: dict[str, Wallet] = dict(wallets or {})
+        self._user: User | None = user
 
     @property
     def user_id(self) -> int:
         return self._user_id
 
     @property
-    def user(self) -> Optional[User]:
+    def user(self) -> User | None:
         return self._user
 
     @property
-    def wallets(self) -> Dict[str, Wallet]:
+    def wallets(self) -> dict[str, Wallet]:
         return dict(self._wallets)
 
     def add_currency(self, currency_code: str) -> Wallet:
@@ -201,7 +200,7 @@ class Portfolio:
         self._wallets[code] = wallet
         return wallet
 
-    def get_wallet(self, currency_code: str) -> Optional[Wallet]:
+    def get_wallet(self, currency_code: str) -> Wallet | None:
         if not isinstance(currency_code, str):
             return None
         return self._wallets.get(currency_code.upper().strip())
@@ -236,7 +235,7 @@ exchange_rates = {
 }
 
 
-def _default_rate(frm: str, to: str) -> Optional[float]:
+def _default_rate(frm: str, to: str) -> float | None:
     frm, to = frm.upper(), to.upper()
     if frm == to:
         return 1.0

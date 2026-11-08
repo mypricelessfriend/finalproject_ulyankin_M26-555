@@ -1,4 +1,5 @@
 """Утилиты: хеширование, TTL-кэш, декораторы confirm/timed, замер времени."""
+
 from __future__ import annotations
 
 import hashlib
@@ -6,9 +7,9 @@ import os
 import secrets
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from typing import Callable
 
 
 # хеширование
@@ -43,6 +44,7 @@ def parse_iso_z(value: str) -> datetime:
 # декораторы
 def confirm_action(prompt: str = "Подтвердить? (y/n): ") -> Callable:
     """Запрашивает подтверждение. Обход: skip_confirm=True / VALUTA_YES=1."""
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, skip_confirm: bool = False, **kwargs):
@@ -56,7 +58,9 @@ def confirm_action(prompt: str = "Подтвердить? (y/n): ") -> Callable:
                 print("Действие отменено")
                 return None
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
@@ -69,6 +73,7 @@ def timed(func: Callable) -> Callable:
         finally:
             elapsed_ms = (time.perf_counter() - start) * 1000
             print(f"[timed] {func.__name__}: {elapsed_ms:.2f} ms", file=sys.stderr)
+
     return wrapper
 
 

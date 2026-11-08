@@ -1,4 +1,5 @@
 """Конфигурация Parser Service (API-ключ, URL, списки валют, пути)."""
+
 from __future__ import annotations
 
 import os

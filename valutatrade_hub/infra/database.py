@@ -5,16 +5,17 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from .settings import SettingsLoader
 
 
 class DatabaseManager:
-    _instance: Optional["DatabaseManager"] = None
+    _instance: DatabaseManager | None = None
 
-    def __new__(cls, *args: Any, **kwargs: Any) -> "DatabaseManager":
+    def __new__(cls, *args: Any, **kwargs: Any) -> DatabaseManager:
         if cls._instance is None:
             inst = super().__new__(cls)
             inst._initialized = False  # type: ignore[attr-defined]

@@ -5,11 +5,12 @@
     — не тянет зависимостей и дополнительных модулей;
     — гарантирует один экземпляр на процесс (в т.ч. при повторных импортах).
 """
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 try:
     import tomllib  # Python 3.11+
@@ -34,16 +35,16 @@ _PATH_KEYS = {"DATA_DIR", "LOG_PATH"}
 
 
 class SettingsLoader:
-    _instance: Optional["SettingsLoader"] = None
+    _instance: SettingsLoader | None = None
 
-    def __new__(cls, *args: Any, **kwargs: Any) -> "SettingsLoader":
+    def __new__(cls, *args: Any, **kwargs: Any) -> SettingsLoader:
         if cls._instance is None:
             inst = super().__new__(cls)
             inst._initialized = False  # type: ignore[attr-defined]
             cls._instance = inst
         return cls._instance
 
-    def __init__(self, config_path: Optional[Path] = None) -> None:
+    def __init__(self, config_path: Path | None = None) -> None:
         if getattr(self, "_initialized", False):
             return
         self._config_path = config_path
@@ -92,7 +93,7 @@ class SettingsLoader:
     def get(self, key: str, default: Any = None) -> Any:
         return self._config.get(key, default)
 
-    def reload(self) -> "SettingsLoader":
+    def reload(self) -> SettingsLoader:
         self._load()
         return self
 

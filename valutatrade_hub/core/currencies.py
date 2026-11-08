@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, List
 
 from .exceptions import CurrencyNotFoundError
 
@@ -97,7 +96,7 @@ def _fmt_mcap(value: float) -> str:
 
 
 # --------------------------- реестр ---------------------------
-_REGISTRY: Dict[str, Currency] = {}
+_REGISTRY: dict[str, Currency] = {}
 
 
 def _register(currency: Currency) -> None:
@@ -131,9 +130,9 @@ def is_known(code: str) -> bool:
         return False
 
 
-def list_codes() -> List[str]:
+def list_codes() -> list[str]:
     return sorted(_REGISTRY.keys())
 
 
-def all_currencies() -> List[Currency]:
+def all_currencies() -> list[Currency]:
     return list(_REGISTRY.values())

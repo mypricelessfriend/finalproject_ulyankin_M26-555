@@ -1,4 +1,5 @@
 """CLI ValutaTrade Hub. Единственная точка входа для команд."""
+
 from __future__ import annotations
 
 import argparse
@@ -108,9 +109,7 @@ def cmd_show_portfolio(args: argparse.Namespace) -> None:
         if rate is None:
             table.add_row([code, f"{wallet.balance:.4f}", "—"])
         else:
-            table.add_row(
-                [code, f"{wallet.balance:.4f}", f"{wallet.balance * rate:,.2f}"]
-            )
+            table.add_row([code, f"{wallet.balance:.4f}", f"{wallet.balance * rate:,.2f}"])
 
     print(f"Портфель пользователя '{user.username}' (база: {base}):")
     print(table)
@@ -222,10 +221,7 @@ def cmd_get_rate(args: argparse.Namespace) -> None:
         print(exc)
         return
 
-    print(
-        f"Курс {frm}→{to}: {_fmt_rate(rate)} "
-        f"(обновлено: {ts.strftime('%Y-%m-%d %H:%M:%S')})"
-    )
+    print(f"Курс {frm}→{to}: {_fmt_rate(rate)} (обновлено: {ts.strftime('%Y-%m-%d %H:%M:%S')})")
     try:
         reverse, _ = usecases.get_rate(to, frm)
         print(f"Обратный курс {to}→{frm}: {_fmt_rate(reverse)}")
@@ -274,25 +270,18 @@ def cmd_show_rates(args: argparse.Namespace) -> None:
         raw = {}
     pairs = raw.get("pairs")
     if not isinstance(pairs, dict):
-        pairs = {
-            k: v for k, v in raw.items() if isinstance(v, dict) and "rate" in v
-        }
+        pairs = {k: v for k, v in raw.items() if isinstance(v, dict) and "rate" in v}
     last_refresh = raw.get("last_refresh") or "—"
 
     if not pairs:
-        print(
-            "Локальный кеш курсов пуст. "
-            "Выполните 'update-rates', чтобы загрузить данные."
-        )
+        print("Локальный кеш курсов пуст. Выполните 'update-rates', чтобы загрузить данные.")
         return
 
     # фильтрация
     selected: list[tuple[str, dict]] = list(pairs.items())
     if args.currency:
         code = args.currency.upper()
-        selected = [
-            (k, v) for k, v in selected if code in k.split("_")
-        ]
+        selected = [(k, v) for k, v in selected if code in k.split("_")]
         if not selected:
             print(f"Курс для '{code}' не найден в кеше.")
             return
@@ -348,9 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_get_rate)
 
     # Parser Service
-    p = sub.add_parser(
-        "update-rates", help="обновить курсы из внешних API (Parser Service)"
-    )
+    p = sub.add_parser("update-rates", help="обновить курсы из внешних API (Parser Service)")
     p.add_argument(
         "--source",
         choices=["coingecko", "exchangerate"],
@@ -415,6 +402,7 @@ def interactive_loop() -> None:
 
 def main() -> None:
     from ..logging_config import setup_logging, setup_parser_logging
+
     setup_logging()
     setup_parser_logging()
     if len(sys.argv) > 1:

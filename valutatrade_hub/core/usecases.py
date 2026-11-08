@@ -1,8 +1,9 @@
 """Бизнес-логика: регистрация, аутентификация, портфель, курсы, buy/sell."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 from valutatrade_hub.decorators import log_action
 from valutatrade_hub.infra.database import DatabaseManager
@@ -12,7 +13,6 @@ from .currencies import get_currency, is_known, list_codes
 from .exceptions import (
     ApiRequestError,
     CurrencyNotFoundError,
-    InsufficientFundsError,
 )
 from .models import Portfolio, User, Wallet
 from .utils import (
@@ -54,14 +54,14 @@ def _load_users() -> list[dict]:
     return _db().load(USERS_FILE, [])
 
 
-def _find_user(username: str) -> Optional[User]:
+def _find_user(username: str) -> User | None:
     for row in _load_users():
         if row["username"] == username:
             return User.from_dict(row)
     return None
 
 
-def _find_user_by_id(user_id: int) -> Optional[User]:
+def _find_user_by_id(user_id: int) -> User | None:
     for row in _load_users():
         if row["user_id"] == int(user_id):
             return User.from_dict(row)
@@ -129,10 +129,7 @@ def load_portfolio(user: User) -> Portfolio:
 def save_portfolio(portfolio: Portfolio) -> None:
     payload = {
         "user_id": portfolio.user_id,
-        "wallets": {
-            code: {"balance": w.balance}
-            for code, w in portfolio.wallets.items()
-        },
+        "wallets": {code: {"balance": w.balance} for code, w in portfolio.wallets.items()},
     }
 
     def _updater(data: list[dict]) -> list[dict]:
@@ -157,7 +154,7 @@ _STUB_RATES = {
 }
 
 
-def _stub_rate(frm: str, to: str) -> Optional[float]:
+def _stub_rate(frm: str, to: str) -> float | None:
     if frm == to:
         return 1.0
     direct = _STUB_RATES.get(f"{frm}_{to}")
@@ -177,7 +174,7 @@ def is_known_currency(code: str) -> bool:
     return is_known(code)
 
 
-def _read_rates_pairs() -> tuple[dict[str, dict], Optional[str]]:
+def _read_rates_pairs() -> tuple[dict[str, dict], str | None]:
     """Читает rates.json в формате {pairs: {...}, last_refresh: str}."""
     raw: Any = _db().load(RATES_FILE, {})
     if not isinstance(raw, dict):
@@ -185,13 +182,11 @@ def _read_rates_pairs() -> tuple[dict[str, dict], Optional[str]]:
     pairs = raw.get("pairs")
     if not isinstance(pairs, dict):
         # backward-compat: старый плоский формат
-        pairs = {
-            k: v for k, v in raw.items() if isinstance(v, dict) and "rate" in v
-        }
+        pairs = {k: v for k, v in raw.items() if isinstance(v, dict) and "rate" in v}
     return pairs, raw.get("last_refresh")
 
 
-def _parse_ts(value: Any) -> Optional[datetime]:
+def _parse_ts(value: Any) -> datetime | None:
     if not isinstance(value, str):
         return None
     try:
@@ -248,11 +243,7 @@ def get_rate(frm: str, to: str, force_refresh: bool = False) -> tuple[float, dat
         current_pairs = data.get("pairs")
         if not isinstance(current_pairs, dict):
             # backward-compat: перенос из плоского формата
-            current_pairs = {
-                k: v
-                for k, v in data.items()
-                if isinstance(v, dict) and "rate" in v
-            }
+            current_pairs = {k: v for k, v in data.items() if isinstance(v, dict) and "rate" in v}
         current_pairs[key] = entry_payload
         return {"pairs": current_pairs, "last_refresh": to_iso_z(now)}
 
@@ -284,15 +275,15 @@ def buy_currency(
     before = wallet.balance
     wallet.deposit(amount)
 
-    rate: Optional[float] = None
-    cost_base: Optional[float] = None
+    rate: float | None = None
+    cost_base: float | None = None
     try:
         rate, _ = get_rate(code, base_code)
         cost_base = amount * rate
     except (CurrencyNotFoundError, ApiRequestError):
         pass
 
-    base_charged: Optional[float] = None
+    base_charged: float | None = None
     if code != base_code and cost_base is not None:
         base_wallet = portfolio.get_wallet(base_code)
         if base_wallet is not None and base_wallet.balance >= cost_base:
@@ -342,15 +333,15 @@ def sell_currency(
     before = wallet.balance
     wallet.withdraw(amount)
 
-    rate: Optional[float] = None
-    revenue_base: Optional[float] = None
+    rate: float | None = None
+    revenue_base: float | None = None
     try:
         rate, _ = get_rate(code, base_code)
         revenue_base = amount * rate
     except (CurrencyNotFoundError, ApiRequestError):
         pass
 
-    base_credited: Optional[float] = None
+    base_credited: float | None = None
     if code != base_code and revenue_base is not None:
         base_wallet = portfolio.get_wallet(base_code) or portfolio.add_currency(base_code)
         base_wallet.deposit(revenue_base)

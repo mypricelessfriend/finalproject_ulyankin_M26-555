@@ -1,4 +1,5 @@
 """Хранилище Parser Service: rates.json (кэш) и exchange_rates.json (история)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -25,11 +26,7 @@ class ParserStorage:
         pairs = data.get("pairs")
         if not isinstance(pairs, dict):
             # backward-compat: старый плоский формат
-            pairs = {
-                k: v
-                for k, v in data.items()
-                if isinstance(v, dict) and "rate" in v
-            }
+            pairs = {k: v for k, v in data.items() if isinstance(v, dict) and "rate" in v}
         return {
             "pairs": pairs,
             "last_refresh": data.get("last_refresh"),
@@ -102,7 +99,6 @@ class ParserStorage:
 
 def _is_newer(new_ts: str | None, old_ts: str | None) -> bool:
     """Сравнение двух ISO-UTC-строк."""
-    from datetime import datetime, timezone
 
     if not new_ts:
         return False

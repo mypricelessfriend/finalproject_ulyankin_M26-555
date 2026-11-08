@@ -1,4 +1,5 @@
 """Клиенты внешних API: CoinGecko и ExchangeRate-API."""
+
 from __future__ import annotations
 
 import time
@@ -25,8 +26,7 @@ class BaseApiClient(ABC):
         self._last_meta: dict[str, Any] = {}
 
     @abstractmethod
-    def fetch_rates(self) -> dict[str, float]:
-        ...
+    def fetch_rates(self) -> dict[str, float]: ...
 
     def _meta(self, **extra: Any) -> dict:
         base = dict(self._last_meta)
