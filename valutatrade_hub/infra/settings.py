@@ -5,7 +5,6 @@
     — не тянет зависимостей и дополнительных модулей;
     — гарантирует один экземпляр на процесс (в т.ч. при повторных импортах).
 """
-
 from __future__ import annotations
 
 import json
@@ -52,7 +51,7 @@ class SettingsLoader:
         self._load()
         self._initialized = True  # type: ignore[attr-defined]
 
-    # ---------- загрузка ----------
+    # загрузка
     def _load(self) -> None:
         cfg: dict[str, Any] = dict(DEFAULTS)
         cfg.update(self._read_pyproject_section())
@@ -89,7 +88,7 @@ class SettingsLoader:
             return {}
         return data if isinstance(data, dict) else {}
 
-    # ---------- публичный API ----------
+    # публичный API
     def get(self, key: str, default: Any = None) -> Any:
         return self._config.get(key, default)
 

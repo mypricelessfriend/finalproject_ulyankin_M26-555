@@ -12,7 +12,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 class ParserConfig:
     # API-ключ — только из переменной окружения, не из кода
     EXCHANGERATE_API_KEY: str = field(
-        default_factory=lambda: os.getenv("EXCHANGERATE_API_KEY", "")
+        default_factory=lambda: os.getenv("EXCHANGERATE_API_KEY", "").strip()
     )
 
     # Эндпоинты

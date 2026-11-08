@@ -22,14 +22,16 @@ class BaseApiClient(ABC):
     def __init__(self, config: ParserConfig) -> None:
         self.config = config
         self.logger = get_parser_logger()
+        self._last_meta: dict[str, Any] = {}
 
     @abstractmethod
     def fetch_rates(self) -> dict[str, float]:
         ...
 
-    # общий helper для метаданных истории
     def _meta(self, **extra: Any) -> dict:
-        return dict(extra)
+        base = dict(self._last_meta)
+        base.update(extra)
+        return base
 
 
 class CoinGeckoClient(BaseApiClient):
@@ -94,11 +96,6 @@ class CoinGeckoClient(BaseApiClient):
         self._last_meta = {"request_ms": elapsed_ms, "status_code": resp.status_code}
         return result
 
-    def _meta(self, **extra: Any) -> dict:
-        base = dict(getattr(self, "_last_meta", {}))
-        base.update(extra)
-        return base
-
 
 class ExchangeRateApiClient(BaseApiClient):
     SOURCE = "ExchangeRate-API"
@@ -107,8 +104,8 @@ class ExchangeRateApiClient(BaseApiClient):
     def fetch_rates(self) -> dict[str, float]:
         if not self.config.has_exchangerate_key():
             raise ApiRequestError(
-                "ExchangeRate-API: не задан EXCHANGERATE_API_KEY "
-                "(переменная окружения)"
+                "ExchangeRate-API: не задан EXCHANGERATE_API_KEY — "
+                "задайте переменную окружения EXCHANGERATE_API_KEY и повторите запуск"
             )
 
         url = (
@@ -160,8 +157,3 @@ class ExchangeRateApiClient(BaseApiClient):
         )
         self._last_meta = {"request_ms": elapsed_ms, "status_code": resp.status_code}
         return result
-
-    def _meta(self, **extra: Any) -> dict:
-        base = dict(getattr(self, "_last_meta", {}))
-        base.update(extra)
-        return base
