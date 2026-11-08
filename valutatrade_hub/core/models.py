@@ -25,7 +25,7 @@ class User:
             registration_date = datetime.fromisoformat(registration_date)
         self._registration_date: datetime = registration_date
 
-    #getters/setters
+    # getters/setters
     @property
     def user_id(self) -> int:
         return self._user_id
@@ -52,7 +52,7 @@ class User:
     def registration_date(self) -> datetime:
         return self._registration_date
 
-    #методы
+    # методы
     def get_user_info(self) -> str:
         return (
             f"ID: {self._user_id}, Имя: {self._username}, "
@@ -68,7 +68,7 @@ class User:
         self._salt = new_salt()
         self._hashed_password = hash_password(new_password, self._salt)
 
-    #(де)сериализация
+    # (де)сериализация
     def to_dict(self) -> dict:
         return {
             "user_id": self._user_id,
