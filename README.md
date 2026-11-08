@@ -120,3 +120,20 @@ uv run valutatrade show-rates --top 2
 - **Синглтоны** — `SettingsLoader` (читает `pyproject.toml`) и `DatabaseManager` (атомарная запись JSON через `tmp -> rename`) гарантируют единое состояние приложения.
 - **TTL-кэш** — курсы в `rates.json` имеют время жизни (`RATES_TTL_SECONDS = 300`). Если данные устарели, Core-сервис инициирует их обновление.
 - **Логирование** — ведется в два файла с ротацией (`RotatingFileHandler`). Декоратор `@log_action` фиксирует операции `BUY`, `SELL` и `LOGIN` с указанием балансов до и после операции.
+
+
+## Демонстрация работы
+
+Записи терминала в формате asciinema (кликните по превью, чтобы открыть полную запись).
+
+### Core Service — полный цикл
+
+[![Core Service demo](https://asciinema.org/a/oMZDATlVDblK7zUY.svg)](https://asciinema.org/a/oMZDATlVDblK7zUY)
+
+Показано: регистрация (`register`) → вход (`login`) → покупка (`buy --currency BTC --amount 0.05`) → продажа (`sell --currency BTC --amount 0.01`) → портфель (`show-portfolio`) → курс (`get-rate --from BTC --to USD`).
+
+### Parser Service и обработка ошибок
+
+[![Parser Service demo](https://asciinema.org/a/2E5fJCxcuo4Jlm5D.svg)](https://asciinema.org/a/2E5fJCxcuo4Jlm5D)
+
+Показано: недостаточно средств (`InsufficientFundsError`) → неизвестная валюта в `get-rate` и `buy` (`CurrencyNotFoundError`) → обновление курсов (`update-rates`) → работа с кэшем (`show-rates`, `--top 2`, `--currency RUB`).
