@@ -5,6 +5,7 @@ description = "ValutaTrade Hub — консольный симулятор ва�
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "asciinema>=2.4.0",
     "prettytable>=3.9.0",
     "requests>=2.31.0",
     "tomli>=2.0.1; python_version < '3.11'",
