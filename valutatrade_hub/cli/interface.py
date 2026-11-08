@@ -1,5 +1,4 @@
 """CLI ValutaTrade Hub. Единственная точка входа для команд."""
-
 from __future__ import annotations
 
 import argparse
@@ -9,6 +8,7 @@ import sys
 from prettytable import PrettyTable
 
 from ..core import usecases
+from ..core.currencies import get_currency
 from ..core.exceptions import (
     ApiRequestError,
     CurrencyNotFoundError,
@@ -82,8 +82,6 @@ def cmd_show_portfolio(args: argparse.Namespace) -> None:
 
     base = (args.base or "USD").upper()
     try:
-        from ..core.currencies import get_currency
-
         get_currency(base)
     except CurrencyNotFoundError as exc:
         _print_currency_not_found(exc, hint="show-portfolio")
@@ -109,7 +107,9 @@ def cmd_show_portfolio(args: argparse.Namespace) -> None:
         if rate is None:
             table.add_row([code, f"{wallet.balance:.4f}", "—"])
         else:
-            table.add_row([code, f"{wallet.balance:.4f}", f"{wallet.balance * rate:,.2f}"])
+            table.add_row(
+                [code, f"{wallet.balance:.4f}", f"{wallet.balance * rate:,.2f}"]
+            )
 
     print(f"Портфель пользователя '{user.username}' (база: {base}):")
     print(table)
@@ -124,7 +124,7 @@ def cmd_show_portfolio(args: argparse.Namespace) -> None:
 def cmd_buy(args: argparse.Namespace) -> None:
     try:
         user = _require_login()
-        res = usecases.buy_currency(user, args.currency, args.amount)
+        res = usecases.buy_currency(user.user_id, args.currency, args.amount)
     except PermissionError as exc:
         print(exc)
         return
@@ -137,28 +137,35 @@ def cmd_buy(args: argparse.Namespace) -> None:
     except (ValueError, TypeError) as exc:
         print(exc)
         return
+    except ValutaTradeError as exc:
+        print(exc)
+        return
 
+    base = res.get("base", "USD")
     if res["rate"] is not None:
         print(
             f"Покупка выполнена: {res['amount']:.4f} {res['currency']} "
-            f"по курсу {res['rate']:.2f} USD/{res['currency']}"
+            f"по курсу {res['rate']:.2f} {base}/{res['currency']}"
         )
     else:
         print(f"Покупка выполнена: {res['amount']:.4f} {res['currency']}")
-        print(f"Не удалось получить курс для {res['currency']}→USD")
+        print(f"Не удалось получить курс для {res['currency']}→{base}")
 
     print("Изменения в портфеле:")
     print(f"- {res['currency']}: было {res['before']:.4f} → стало {res['after']:.4f}")
-    if res["cost_usd"] is not None:
-        print(f"Оценочная стоимость покупки: {res['cost_usd']:,.2f} USD")
-    if res["usd_charged"] is not None:
-        print(f"Списано с USD: {res['usd_charged']:,.2f} USD")
+
+    if res.get("cost_base") is not None:
+        print(f"Оценочная стоимость покупки: {res['cost_base']:,.2f} {base}")
+    if res.get("base_charged") is not None:
+        print(f"Списано с {base}: {res['base_charged']:,.2f} {base}")
 
 
 def cmd_sell(args: argparse.Namespace) -> None:
     try:
         user = _require_login()
-        res = usecases.sell_currency(user, args.currency, args.amount, skip_confirm=args.yes)
+        res = usecases.sell_currency(
+            user.user_id, args.currency, args.amount, skip_confirm=args.yes
+        )
     except PermissionError as exc:
         print(exc)
         return
@@ -178,24 +185,26 @@ def cmd_sell(args: argparse.Namespace) -> None:
         print(exc)
         return
 
-    if res is None:
+    if res is None:  # отменено confirm_action
         return
 
+    base = res.get("base", "USD")
     if res["rate"] is not None:
         print(
             f"Продажа выполнена: {res['amount']:.4f} {res['currency']} "
-            f"по курсу {res['rate']:.2f} USD/{res['currency']}"
+            f"по курсу {res['rate']:.2f} {base}/{res['currency']}"
         )
     else:
         print(f"Продажа выполнена: {res['amount']:.4f} {res['currency']}")
-        print(f"Не удалось получить курс для {res['currency']}→USD")
+        print(f"Не удалось получить курс для {res['currency']}→{base}")
 
     print("Изменения в портфеле:")
     print(f"- {res['currency']}: было {res['before']:.4f} → стало {res['after']:.4f}")
-    if res["revenue_usd"] is not None:
-        print(f"Оценочная выручка: {res['revenue_usd']:,.2f} USD")
-    if res["usd_credited"] is not None:
-        print(f"Начислено на USD: {res['usd_credited']:,.2f} USD")
+
+    if res.get("revenue_base") is not None:
+        print(f"Оценочная выручка: {res['revenue_base']:,.2f} {base}")
+    if res.get("base_credited") is not None:
+        print(f"Начислено на {base}: {res['base_credited']:,.2f} {base}")
 
 
 def cmd_get_rate(args: argparse.Namespace) -> None:
@@ -212,7 +221,10 @@ def cmd_get_rate(args: argparse.Namespace) -> None:
         print(exc)
         return
 
-    print(f"Курс {frm}→{to}: {_fmt_rate(rate)} (обновлено: {ts.strftime('%Y-%m-%d %H:%M:%S')})")
+    print(
+        f"Курс {frm}→{to}: {_fmt_rate(rate)} "
+        f"(обновлено: {ts.strftime('%Y-%m-%d %H:%M:%S')})"
+    )
     try:
         reverse, _ = usecases.get_rate(to, frm)
         print(f"Обратный курс {to}→{frm}: {_fmt_rate(reverse)}")
@@ -306,7 +318,6 @@ def interactive_loop() -> None:
 
 def main() -> None:
     from ..logging_config import setup_logging
-
     setup_logging()
     if len(sys.argv) > 1:
         run_argv(sys.argv[1:])

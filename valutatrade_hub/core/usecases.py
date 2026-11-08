@@ -1,5 +1,4 @@
 """Бизнес-логика: регистрация, аутентификация, портфель, курсы, buy/sell."""
-
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -23,11 +22,14 @@ PORTFOLIOS_FILE = "portfolios.json"
 RATES_FILE = "rates.json"
 
 
+# синглтоны
 def _db() -> DatabaseManager:
+    """Singleton DatabaseManager — единая точка доступа к JSON-хранилищу."""
     return DatabaseManager()
 
 
 def _settings() -> SettingsLoader:
+    """Singleton SettingsLoader — конфигурация проекта (секция [tool.valutatrade])."""
     return SettingsLoader()
 
 
@@ -53,6 +55,13 @@ def _find_user(username: str) -> Optional[User]:
     return None
 
 
+def _find_user_by_id(user_id: int) -> Optional[User]:
+    for row in _load_users():
+        if row["user_id"] == int(user_id):
+            return User.from_dict(row)
+    return None
+
+
 def _username_taken(username: str) -> bool:
     return any(u["username"] == username for u in _load_users())
 
@@ -66,15 +75,23 @@ def register_user(username: str, password: str) -> User:
     if _username_taken(username):
         raise ValueError(f"Имя пользователя '{username}' уже занято")
 
-    users = _load_users()
-    new_id = max((u["user_id"] for u in users), default=0) + 1
-    user = User.create(new_id, username, password)
-    users.append(user.to_dict())
-    _db().save(USERS_FILE, users)
+    # атомарный read-modify-write для users.json
+    holder: dict[str, User] = {}
 
+    def _users_updater(data: list[dict]) -> list[dict]:
+        new_id = max((u["user_id"] for u in data), default=0) + 1
+        user_obj = User.create(new_id, username, password)
+        data.append(user_obj.to_dict())
+        holder["user"] = user_obj
+        return data
+
+    _db().mutate(USERS_FILE, _users_updater, default=[])
+    user = holder["user"]
+
+    # атомарно добавляем пустой портфель
     _db().mutate(
         PORTFOLIOS_FILE,
-        lambda data: data + [{"user_id": new_id, "wallets": {}}],
+        lambda data: data + [{"user_id": user.user_id, "wallets": {}}],
         default=[],
     )
     return user
@@ -108,7 +125,10 @@ def load_portfolio(user: User) -> Portfolio:
 def save_portfolio(portfolio: Portfolio) -> None:
     payload = {
         "user_id": portfolio.user_id,
-        "wallets": {code: {"balance": w.balance} for code, w in portfolio.wallets.items()},
+        "wallets": {
+            code: {"balance": w.balance}
+            for code, w in portfolio.wallets.items()
+        },
     }
 
     def _updater(data: list[dict]) -> list[dict]:
@@ -202,10 +222,20 @@ def get_rate(frm: str, to: str, force_refresh: bool = False) -> tuple[float, dat
 
 # buy / sell
 @log_action(action="BUY", verbose=True)
-def buy_currency(user: User, currency_code: str, amount: float) -> dict:
+def buy_currency(
+    user_id: int,
+    currency_code: str,
+    amount: float,
+    base: str = "USD",
+) -> dict:
+    user = _find_user_by_id(user_id)
+    if user is None:
+        raise ValueError(f"Пользователь с id={user_id} не найден")
+
     if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
         raise ValueError("'amount' должен быть положительным числом")
-    code = get_currency(currency_code).code  # CurrencyNotFoundError при неизвестном
+    code = get_currency(currency_code).code
+    base_code = get_currency(base).code
 
     portfolio = load_portfolio(user)
     wallet = portfolio.get_wallet(code) or portfolio.add_currency(code)
@@ -214,20 +244,20 @@ def buy_currency(user: User, currency_code: str, amount: float) -> dict:
     wallet.deposit(amount)
 
     rate: Optional[float] = None
-    cost_usd: Optional[float] = None
+    cost_base: Optional[float] = None
     try:
-        rate, _ = get_rate(code, "USD")
-        cost_usd = amount * rate
+        rate, _ = get_rate(code, base_code)
+        cost_base = amount * rate
     except (CurrencyNotFoundError, ApiRequestError):
         pass
 
-    # списание с USD (best-effort)
-    usd_charged: Optional[float] = None
-    if code != "USD" and cost_usd is not None:
-        usd_wallet = portfolio.get_wallet("USD")
-        if usd_wallet is not None and usd_wallet.balance >= cost_usd:
-            usd_wallet.withdraw(cost_usd)
-            usd_charged = cost_usd
+    # списание с базового кошелька (best-effort)
+    base_charged: Optional[float] = None
+    if code != base_code and cost_base is not None:
+        base_wallet = portfolio.get_wallet(base_code)
+        if base_wallet is not None and base_wallet.balance >= cost_base:
+            base_wallet.withdraw(cost_base)
+            base_charged = cost_base
 
     save_portfolio(portfolio)
     return {
@@ -236,17 +266,31 @@ def buy_currency(user: User, currency_code: str, amount: float) -> dict:
         "before": before,
         "after": wallet.balance,
         "rate": rate,
-        "cost_usd": cost_usd,
-        "usd_charged": usd_charged,
+        "base": base_code,
+        "cost_base": cost_base,
+        "base_charged": base_charged,
+        # обратная совместимость с CLI (когда base == USD)
+        "cost_usd": cost_base if base_code == "USD" else None,
+        "usd_charged": base_charged if base_code == "USD" else None,
     }
 
 
 @confirm_action("Подтвердить продажу? (y/n): ")
 @log_action(action="SELL", verbose=True)
-def sell_currency(user: User, currency_code: str, amount: float) -> dict | None:
+def sell_currency(
+    user_id: int,
+    currency_code: str,
+    amount: float,
+    base: str = "USD",
+) -> dict | None:
+    user = _find_user_by_id(user_id)
+    if user is None:
+        raise ValueError(f"Пользователь с id={user_id} не найден")
+
     if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
         raise ValueError("'amount' должен быть положительным числом")
     code = get_currency(currency_code).code
+    base_code = get_currency(base).code
 
     portfolio = load_portfolio(user)
     wallet = portfolio.get_wallet(code)
@@ -260,19 +304,19 @@ def sell_currency(user: User, currency_code: str, amount: float) -> dict | None:
     wallet.withdraw(amount)  # InsufficientFundsError, если мало
 
     rate: Optional[float] = None
-    revenue_usd: Optional[float] = None
+    revenue_base: Optional[float] = None
     try:
-        rate, _ = get_rate(code, "USD")
-        revenue_usd = amount * rate
+        rate, _ = get_rate(code, base_code)
+        revenue_base = amount * rate
     except (CurrencyNotFoundError, ApiRequestError):
         pass
 
-    # зачисление в USD (best-effort)
-    usd_credited: Optional[float] = None
-    if code != "USD" and revenue_usd is not None:
-        usd_wallet = portfolio.get_wallet("USD") or portfolio.add_currency("USD")
-        usd_wallet.deposit(revenue_usd)
-        usd_credited = revenue_usd
+    # зачисление в базовый кошелёк (best-effort)
+    base_credited: Optional[float] = None
+    if code != base_code and revenue_base is not None:
+        base_wallet = portfolio.get_wallet(base_code) or portfolio.add_currency(base_code)
+        base_wallet.deposit(revenue_base)
+        base_credited = revenue_base
 
     save_portfolio(portfolio)
     return {
@@ -281,6 +325,10 @@ def sell_currency(user: User, currency_code: str, amount: float) -> dict | None:
         "before": before,
         "after": wallet.balance,
         "rate": rate,
-        "revenue_usd": revenue_usd,
-        "usd_credited": usd_credited,
+        "base": base_code,
+        "revenue_base": revenue_base,
+        "base_credited": base_credited,
+        # обратная совместимость
+        "revenue_usd": revenue_base if base_code == "USD" else None,
+        "usd_credited": base_credited if base_code == "USD" else None,
     }
