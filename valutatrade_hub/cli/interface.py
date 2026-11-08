@@ -24,6 +24,17 @@ def _require_login() -> User:
     return _session.user
 
 
+def _fmt_rate(rate: float) -> str:
+    """Форматирует курс так, как в примерах ТЗ (без научной нотации)."""
+    if rate == 0:
+        return "0"
+    if rate < 0.001:
+        return f"{rate:.8f}"
+    if rate < 1:
+        return f"{rate:.6f}".rstrip("0").rstrip(".")
+    return f"{rate:.4f}".rstrip("0").rstrip(".")
+
+
 # команды
 def cmd_register(args: argparse.Namespace) -> None:
     try:
@@ -33,7 +44,7 @@ def cmd_register(args: argparse.Namespace) -> None:
             f"Войдите: login --username {user.username} --password ****"
         )
     except ValueError as exc:
-        print(f"Ошибка: {exc}")
+        print(exc)
 
 
 def cmd_login(args: argparse.Namespace) -> None:
@@ -42,7 +53,7 @@ def cmd_login(args: argparse.Namespace) -> None:
         _session.user = user
         print(f"Вы вошли как '{user.username}'")
     except ValueError as exc:
-        print(f"Ошибка: {exc}")
+        print(exc)
 
 
 def cmd_show_portfolio(args: argparse.Namespace) -> None:
@@ -63,21 +74,32 @@ def cmd_show_portfolio(args: argparse.Namespace) -> None:
         print("Портфель пуст. Купите валюту: buy --currency USD --amount 100")
         return
 
+    def rate_getter(code: str, base_cur: str):
+        try:
+            return usecases.get_rate(code, base_cur)[0]
+        except LookupError:
+            return None
+
     table = PrettyTable()
     table.field_names = ["Валюта", "Баланс", f"Стоимость ({base})"]
     table.align = "r"
-    total = 0.0
     for code, wallet in wallets.items():
-        try:
-            rate, _ = usecases.get_rate(code, base)
-            value = wallet.balance * rate
-            total += value
-            table.add_row([code, f"{wallet.balance:.4f}", f"{value:,.2f}"])
-        except LookupError:
+        rate = rate_getter(code, base)
+        if rate is None:
             table.add_row([code, f"{wallet.balance:.4f}", "—"])
+        else:
+            table.add_row(
+                [code, f"{wallet.balance:.4f}", f"{wallet.balance * rate:,.2f}"]
+            )
+
     print(f"Портфель пользователя '{user.username}' (база: {base}):")
     print(table)
-    print(f"ИТОГО: {total:,.2f} {base}")
+
+    try:
+        total = portfolio.get_total_value(base, rate_getter=rate_getter)
+        print(f"ИТОГО: {total:,.2f} {base}")
+    except LookupError:
+        print("ИТОГО: не удалось посчитать (нет курсов для некоторых валют)")
 
 
 def cmd_buy(args: argparse.Namespace) -> None:
@@ -85,15 +107,27 @@ def cmd_buy(args: argparse.Namespace) -> None:
         user = _require_login()
         res = usecases.buy_currency(user, args.currency, args.amount)
     except (PermissionError, ValueError, TypeError) as exc:
-        print(f"Ошибка: {exc}")
+        print(exc)
         return
-    rate = f"{res['rate']:.2f}" if res["rate"] else "?"
-    print(f"Покупка выполнена: {res['amount']:.4f} {res['currency']} "
-          f"по курсу {rate} USD/{res['currency']}")
+
+    if res["rate"] is not None:
+        print(
+            f"Покупка выполнена: {res['amount']:.4f} {res['currency']} "
+            f"по курсу {res['rate']:.2f} USD/{res['currency']}"
+        )
+    else:
+        print(f"Покупка выполнена: {res['amount']:.4f} {res['currency']}")
+        print(f"Не удалось получить курс для {res['currency']}→USD")
+
     print("Изменения в портфеле:")
-    print(f"- {res['currency']}: было {res['before']:.4f} → стало {res['after']:.4f}")
+    print(
+        f"- {res['currency']}: было {res['before']:.4f} → стало {res['after']:.4f}"
+    )
+
     if res["cost_usd"] is not None:
         print(f"Оценочная стоимость покупки: {res['cost_usd']:,.2f} USD")
+    if res["usd_charged"] is not None:
+        print(f"Списано с USD: {res['usd_charged']:,.2f} USD")
 
 
 def cmd_sell(args: argparse.Namespace) -> None:
@@ -103,17 +137,29 @@ def cmd_sell(args: argparse.Namespace) -> None:
             user, args.currency, args.amount, skip_confirm=args.yes
         )
     except (PermissionError, ValueError, TypeError) as exc:
-        print(f"Ошибка: {exc}")
+        print(exc)
         return
     if res is None:  # отменено confirm_action
         return
-    rate = f"{res['rate']:.2f}" if res["rate"] else "?"
-    print(f"Продажа выполнена: {res['amount']:.4f} {res['currency']} "
-          f"по курсу {rate} USD/{res['currency']}")
+
+    if res["rate"] is not None:
+        print(
+            f"Продажа выполнена: {res['amount']:.4f} {res['currency']} "
+            f"по курсу {res['rate']:.2f} USD/{res['currency']}"
+        )
+    else:
+        print(f"Продажа выполнена: {res['amount']:.4f} {res['currency']}")
+        print(f"Не удалось получить курс для {res['currency']}→USD")
+
     print("Изменения в портфеле:")
-    print(f"- {res['currency']}: было {res['before']:.4f} → стало {res['after']:.4f}")
+    print(
+        f"- {res['currency']}: было {res['before']:.4f} → стало {res['after']:.4f}"
+    )
+
     if res["revenue_usd"] is not None:
         print(f"Оценочная выручка: {res['revenue_usd']:,.2f} USD")
+    if res["usd_credited"] is not None:
+        print(f"Начислено на USD: {res['usd_credited']:,.2f} USD")
 
 
 def cmd_get_rate(args: argparse.Namespace) -> None:
@@ -121,13 +167,15 @@ def cmd_get_rate(args: argparse.Namespace) -> None:
         frm, to = args.from_.upper(), args.to.upper()
         rate, ts = usecases.get_rate(frm, to)
     except (ValueError, LookupError) as exc:
-        print(f"Ошибка: {exc}")
+        print(exc)
         return
-    print(f"Курс {frm}→{to}: {rate:.8g} "
-          f"(обновлено: {ts.strftime('%Y-%m-%d %H:%M:%S')})")
+    print(
+        f"Курс {frm}→{to}: {_fmt_rate(rate)} "
+        f"(обновлено: {ts.strftime('%Y-%m-%d %H:%M:%S')})"
+    )
     try:
         reverse, _ = usecases.get_rate(to, frm)
-        print(f"Обратный курс {to}→{frm}: {reverse:.8g}")
+        print(f"Обратный курс {to}→{frm}: {_fmt_rate(reverse)}")
     except LookupError:
         pass
 
@@ -196,8 +244,10 @@ def run_command(line: str) -> None:
 
 
 def interactive_loop() -> None:
-    print("ValutaTrade Hub CLI. Команды: register, login, show-portfolio, "
-          "buy, sell, get-rate. 'help' — справка, 'exit' — выход.")
+    print(
+        "ValutaTrade Hub CLI. Команды: register, login, show-portfolio, "
+        "buy, sell, get-rate. 'help' — справка, 'exit' — выход."
+    )
     while True:
         try:
             line = input("> ").strip()

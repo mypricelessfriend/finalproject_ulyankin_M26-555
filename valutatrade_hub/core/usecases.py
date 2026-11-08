@@ -216,20 +216,33 @@ def buy_currency(user: User, currency_code: str, amount: float) -> dict:
 
     before = wallet.balance
     wallet.deposit(amount)
-    save_portfolio(portfolio)
 
-    rate = None
-    cost_usd = None
+    rate: Optional[float] = None
+    cost_usd: Optional[float] = None
     try:
         rate, _ = get_rate(code, "USD")
         cost_usd = amount * rate
     except LookupError:
         pass
 
+    # при покупке сумма списывается с USD-кошелька.
+    # Делаем best-effort: если USD-кошелёк есть и баланса хватает — списываем.
+    usd_charged: Optional[float] = None
+    if code != "USD" and cost_usd is not None:
+        usd_wallet = portfolio.get_wallet("USD")
+        if usd_wallet is not None and usd_wallet.balance >= cost_usd:
+            usd_wallet.withdraw(cost_usd)
+            usd_charged = cost_usd
+
+    save_portfolio(portfolio)
     return {
-        "currency": code, "amount": amount,
-        "before": before, "after": wallet.balance,
-        "rate": rate, "cost_usd": cost_usd,
+        "currency": code,
+        "amount": amount,
+        "before": before,
+        "after": wallet.balance,
+        "rate": rate,
+        "cost_usd": cost_usd,
+        "usd_charged": usd_charged,
     }
 
 
@@ -247,23 +260,34 @@ def sell_currency(user: User, currency_code: str, amount: float) -> dict | None:
     if wallet is None:
         raise ValueError(
             f"У вас нет кошелька '{code}'. "
-            f"Он создаётся автоматически при первой покупке."
+            f"Добавьте валюту: она создаётся автоматически при первой покупке."
         )
 
     before = wallet.balance
     wallet.withdraw(amount)
-    save_portfolio(portfolio)
 
-    rate = None
-    revenue_usd = None
+    rate: Optional[float] = None
+    revenue_usd: Optional[float] = None
     try:
         rate, _ = get_rate(code, "USD")
         revenue_usd = amount * rate
     except LookupError:
         pass
 
+    # при продаже сумма начисляется на USD-кошелёк
+    usd_credited: Optional[float] = None
+    if code != "USD" and revenue_usd is not None:
+        usd_wallet = portfolio.get_wallet("USD") or portfolio.add_currency("USD")
+        usd_wallet.deposit(revenue_usd)
+        usd_credited = revenue_usd
+
+    save_portfolio(portfolio)
     return {
-        "currency": code, "amount": amount,
-        "before": before, "after": wallet.balance,
-        "rate": rate, "revenue_usd": revenue_usd,
+        "currency": code,
+        "amount": amount,
+        "before": before,
+        "after": wallet.balance,
+        "rate": rate,
+        "revenue_usd": revenue_usd,
+        "usd_credited": usd_credited,
     }

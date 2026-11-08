@@ -25,7 +25,7 @@ class User:
             registration_date = datetime.fromisoformat(registration_date)
         self._registration_date: datetime = registration_date
 
-    # getters/setters
+    # getters / setters
     @property
     def user_id(self) -> int:
         return self._user_id
@@ -164,7 +164,7 @@ class Portfolio:
         self._wallets: Dict[str, Wallet] = dict(wallets or {})
         self._user: Optional[User] = user
 
-    #свойства
+    # свойства
     @property
     def user_id(self) -> int:
         return self._user_id
@@ -177,7 +177,7 @@ class Portfolio:
     def wallets(self) -> Dict[str, Wallet]:
         return dict(self._wallets)  # копия, чтобы не мутировали извне
 
-    #методы
+    # ---------- методы ----------
     def add_currency(self, currency_code: str) -> Wallet:
         code = (currency_code or "").upper().strip()
         if not code:
@@ -198,7 +198,7 @@ class Portfolio:
     ) -> float:
         """
         Сумма всех кошельков в base_currency.
-        rate_getter(code, base) -> float. По умолчанию берём фиктивные курсы.
+        rate_getter(code, base) -> float. По умолчанию — фиксированные exchange_rates.
         """
         base = base_currency.upper()
         getter = rate_getter or _default_rate
@@ -214,7 +214,8 @@ class Portfolio:
         return f"Portfolio(user_id={self._user_id}, wallets={list(self._wallets)})"
 
 
-_FIXED_RATES = {
+# фиксированные курсы (используются, если не передан rate_getter)
+exchange_rates = {
     ("USD", "USD"): 1.0,
     ("EUR", "USD"): 1.0786,
     ("BTC", "USD"): 59337.21,
@@ -227,8 +228,8 @@ def _default_rate(frm: str, to: str) -> Optional[float]:
     frm, to = frm.upper(), to.upper()
     if frm == to:
         return 1.0
-    if (frm, to) in _FIXED_RATES:
-        return _FIXED_RATES[(frm, to)]
-    if (to, frm) in _FIXED_RATES:
-        return 1.0 / _FIXED_RATES[(to, frm)]
+    if (frm, to) in exchange_rates:
+        return exchange_rates[(frm, to)]
+    if (to, frm) in exchange_rates:
+        return 1.0 / exchange_rates[(to, frm)]
     return None
