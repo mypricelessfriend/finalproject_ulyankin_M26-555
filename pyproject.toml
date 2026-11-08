@@ -1,11 +1,12 @@
 [project]
 name = "finalproject-ulyankin-M26-555"
-version = "0.1.0"
+version = "0.3.0"
 description = "ValutaTrade Hub — консольный симулятор валютного кошелька"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "prettytable>=3.9.0",
+    "requests>=2.31.0",
     "tomli>=2.0.1; python_version < '3.11'",
 ]
 

@@ -8,4 +8,6 @@ build/
 logs/
 data/*.json
 data/config.json
+data/exchange_rates.json
 .pytest_cache/
+.env

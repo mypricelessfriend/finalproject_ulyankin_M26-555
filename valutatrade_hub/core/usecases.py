@@ -1,8 +1,8 @@
 """Бизнес-логика: регистрация, аутентификация, портфель, курсы, buy/sell."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
 
 from valutatrade_hub.decorators import log_action
 from valutatrade_hub.infra.database import DatabaseManager
@@ -15,7 +15,13 @@ from .exceptions import (
     InsufficientFundsError,
 )
 from .models import Portfolio, User, Wallet
-from .utils import confirm_action, make_rate_cache, timed
+from .utils import (
+    confirm_action,
+    make_rate_cache,
+    parse_iso_z,
+    timed,
+    to_iso_z,
+)
 
 USERS_FILE = "users.json"
 PORTFOLIOS_FILE = "portfolios.json"
@@ -75,7 +81,6 @@ def register_user(username: str, password: str) -> User:
     if _username_taken(username):
         raise ValueError(f"Имя пользователя '{username}' уже занято")
 
-    # атомарный read-modify-write для users.json
     holder: dict[str, User] = {}
 
     def _users_updater(data: list[dict]) -> list[dict]:
@@ -88,7 +93,6 @@ def register_user(username: str, password: str) -> User:
     _db().mutate(USERS_FILE, _users_updater, default=[])
     user = holder["user"]
 
-    # атомарно добавляем пустой портфель
     _db().mutate(
         PORTFOLIOS_FILE,
         lambda data: data + [{"user_id": user.user_id, "wallets": {}}],
@@ -173,6 +177,32 @@ def is_known_currency(code: str) -> bool:
     return is_known(code)
 
 
+def _read_rates_pairs() -> tuple[dict[str, dict], Optional[str]]:
+    """Читает rates.json в формате {pairs: {...}, last_refresh: str}."""
+    raw: Any = _db().load(RATES_FILE, {})
+    if not isinstance(raw, dict):
+        return {}, None
+    pairs = raw.get("pairs")
+    if not isinstance(pairs, dict):
+        # backward-compat: старый плоский формат
+        pairs = {
+            k: v for k, v in raw.items() if isinstance(v, dict) and "rate" in v
+        }
+    return pairs, raw.get("last_refresh")
+
+
+def _parse_ts(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = parse_iso_z(value)
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 @timed
 def get_rate(frm: str, to: str, force_refresh: bool = False) -> tuple[float, datetime]:
     """
@@ -191,29 +221,40 @@ def get_rate(frm: str, to: str, force_refresh: bool = False) -> tuple[float, dat
         if hit is not None:
             return hit
 
-    rates = _db().load(RATES_FILE, {})
-    if not force_refresh and key in rates:
-        try:
-            ts = datetime.fromisoformat(rates[key]["updated_at"])
-        except (KeyError, ValueError):
-            ts = None
-        if ts and (datetime.now() - ts) < _rates_ttl():
-            rate = float(rates[key]["rate"])
+    pairs, _ = _read_rates_pairs()
+    entry = pairs.get(key)
+    if not force_refresh and isinstance(entry, dict):
+        ts = _parse_ts(entry.get("updated_at"))
+        if ts and (datetime.now(timezone.utc) - ts) < _rates_ttl():
+            rate = float(entry["rate"])
             _cached_put(key, rate, ts)
             return rate, ts
 
+    # fallback: встроенный заглушечный курс
     rate = _stub_rate(from_code, to_code)
     if rate is None:
         raise ApiRequestError(f"курс {from_code}→{to_code} недоступен")
 
-    now = datetime.now()
-    entry = {"rate": rate, "updated_at": now.isoformat(timespec="seconds")}
+    now = datetime.now(timezone.utc)
+    entry_payload = {
+        "rate": rate,
+        "updated_at": to_iso_z(now),
+        "source": "CoreStub",
+    }
 
-    def _updater(data: dict) -> dict:
-        data[key] = entry
-        data["last_refresh"] = now.isoformat(timespec="seconds")
-        data["source"] = "ParserService"
-        return data
+    def _updater(data: Any) -> dict:
+        if not isinstance(data, dict):
+            data = {}
+        current_pairs = data.get("pairs")
+        if not isinstance(current_pairs, dict):
+            # backward-compat: перенос из плоского формата
+            current_pairs = {
+                k: v
+                for k, v in data.items()
+                if isinstance(v, dict) and "rate" in v
+            }
+        current_pairs[key] = entry_payload
+        return {"pairs": current_pairs, "last_refresh": to_iso_z(now)}
 
     _db().mutate(RATES_FILE, _updater, default={})
     _cached_put(key, rate, now)
@@ -251,7 +292,6 @@ def buy_currency(
     except (CurrencyNotFoundError, ApiRequestError):
         pass
 
-    # списание с базового кошелька (best-effort)
     base_charged: Optional[float] = None
     if code != base_code and cost_base is not None:
         base_wallet = portfolio.get_wallet(base_code)
@@ -269,7 +309,6 @@ def buy_currency(
         "base": base_code,
         "cost_base": cost_base,
         "base_charged": base_charged,
-        # обратная совместимость с CLI (когда base == USD)
         "cost_usd": cost_base if base_code == "USD" else None,
         "usd_charged": base_charged if base_code == "USD" else None,
     }
@@ -301,7 +340,7 @@ def sell_currency(
         )
 
     before = wallet.balance
-    wallet.withdraw(amount)  # InsufficientFundsError, если мало
+    wallet.withdraw(amount)
 
     rate: Optional[float] = None
     revenue_base: Optional[float] = None
@@ -311,7 +350,6 @@ def sell_currency(
     except (CurrencyNotFoundError, ApiRequestError):
         pass
 
-    # зачисление в базовый кошелёк (best-effort)
     base_credited: Optional[float] = None
     if code != base_code and revenue_base is not None:
         base_wallet = portfolio.get_wallet(base_code) or portfolio.add_currency(base_code)
@@ -328,7 +366,6 @@ def sell_currency(
         "base": base_code,
         "revenue_base": revenue_base,
         "base_credited": base_credited,
-        # обратная совместимость
         "revenue_usd": revenue_base if base_code == "USD" else None,
         "usd_credited": base_credited if base_code == "USD" else None,
     }

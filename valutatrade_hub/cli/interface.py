@@ -16,6 +16,7 @@ from ..core.exceptions import (
     ValutaTradeError,
 )
 from ..core.models import User
+from ..infra.database import DatabaseManager
 
 
 class _Session:
@@ -52,7 +53,7 @@ def _print_api_error(exc: ApiRequestError) -> None:
     print("Повторите попытку позже или проверьте сетевое подключение.")
 
 
-# команды
+# core команды
 def cmd_register(args: argparse.Namespace) -> None:
     try:
         user = usecases.register_user(args.username, args.password)
@@ -185,7 +186,7 @@ def cmd_sell(args: argparse.Namespace) -> None:
         print(exc)
         return
 
-    if res is None:  # отменено confirm_action
+    if res is None:
         return
 
     base = res.get("base", "USD")
@@ -232,6 +233,83 @@ def cmd_get_rate(args: argparse.Namespace) -> None:
         pass
 
 
+# Parser Service команды
+def cmd_update_rates(args: argparse.Namespace) -> None:
+    # локальный импорт — чтобы не тянуть requests при простых командах
+    from ..parser_service.config import ParserConfig
+    from ..parser_service.storage import ParserStorage
+    from ..parser_service.updater import RatesUpdater
+
+    try:
+        config = ParserConfig()
+        storage = ParserStorage(config)
+        updater = RatesUpdater(config, storage)
+        summary = updater.run_update(source=args.source)
+    except ApiRequestError as exc:
+        _print_api_error(exc)
+        return
+
+    if summary["errors"]:
+        print("Update completed with errors. Check logs/parser.log for details.")
+        for err in summary["errors"]:
+            print(f"- {err['source']}: {err['error']}")
+        if summary["total_rates"]:
+            print(
+                f"Partial success: {summary['total_rates']} rates updated from "
+                f"{', '.join(summary['sources_ok']) or '—'}. "
+                f"Last refresh: {summary['last_refresh']}"
+            )
+        return
+
+    print(
+        f"Update successful. Total rates updated: {summary['total_rates']}. "
+        f"Last refresh: {summary['last_refresh']}"
+    )
+
+
+def cmd_show_rates(args: argparse.Namespace) -> None:
+    db = DatabaseManager()
+    raw = db.load("rates.json", {})
+    if not isinstance(raw, dict):
+        raw = {}
+    pairs = raw.get("pairs")
+    if not isinstance(pairs, dict):
+        pairs = {
+            k: v for k, v in raw.items() if isinstance(v, dict) and "rate" in v
+        }
+    last_refresh = raw.get("last_refresh") or "—"
+
+    if not pairs:
+        print(
+            "Локальный кеш курсов пуст. "
+            "Выполните 'update-rates', чтобы загрузить данные."
+        )
+        return
+
+    # фильтрация
+    selected: list[tuple[str, dict]] = list(pairs.items())
+    if args.currency:
+        code = args.currency.upper()
+        selected = [
+            (k, v) for k, v in selected if code in k.split("_")
+        ]
+        if not selected:
+            print(f"Курс для '{code}' не найден в кеше.")
+            return
+    elif args.top:
+        try:
+            selected.sort(key=lambda kv: float(kv[1].get("rate", 0)), reverse=True)
+        except (TypeError, ValueError):
+            pass
+        selected = selected[: max(1, int(args.top))]
+
+    print(f"Rates from cache (updated at {last_refresh}):")
+    for key, entry in selected:
+        rate = entry.get("rate", "—")
+        source = entry.get("source", "?")
+        print(f"- {key}: {rate}  (source: {source})")
+
+
 # парсер
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -269,6 +347,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--to", required=True)
     p.set_defaults(func=cmd_get_rate)
 
+    # Parser Service
+    p = sub.add_parser(
+        "update-rates", help="обновить курсы из внешних API (Parser Service)"
+    )
+    p.add_argument(
+        "--source",
+        choices=["coingecko", "exchangerate"],
+        default=None,
+        help="обновить только из указанного источника (по умолчанию — все)",
+    )
+    p.set_defaults(func=cmd_update_rates)
+
+    p = sub.add_parser("show-rates", help="показать курсы из локального кеша")
+    p.add_argument("--currency", help="фильтр по коду валюты (например, BTC)")
+    p.add_argument("--top", type=int, help="показать N самых дорогих криптовалют")
+    p.add_argument("--base", help="показать все курсы относительно базы (не реализовано)")
+    p.set_defaults(func=cmd_show_rates)
+
     return parser
 
 
@@ -298,7 +394,8 @@ def run_command(line: str) -> None:
 def interactive_loop() -> None:
     print(
         "ValutaTrade Hub CLI. Команды: register, login, show-portfolio, "
-        "buy, sell, get-rate. 'help' — справка, 'exit' — выход."
+        "buy, sell, get-rate, update-rates, show-rates. "
+        "'help' — справка, 'exit' — выход."
     )
     while True:
         try:
@@ -317,8 +414,9 @@ def interactive_loop() -> None:
 
 
 def main() -> None:
-    from ..logging_config import setup_logging
+    from ..logging_config import setup_logging, setup_parser_logging
     setup_logging()
+    setup_parser_logging()
     if len(sys.argv) > 1:
         run_argv(sys.argv[1:])
     else:
