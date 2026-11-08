@@ -4,33 +4,45 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional
 
-from .models import Portfolio, User, Wallet
-from .utils import (
-    confirm_action,
-    load_json,
-    log_action,
-    make_rate_cache,
-    save_json,
-    timed,
+from valutatrade_hub.decorators import log_action
+from valutatrade_hub.infra.database import DatabaseManager
+from valutatrade_hub.infra.settings import SettingsLoader
+
+from .currencies import get_currency, is_known, list_codes
+from .exceptions import (
+    ApiRequestError,
+    CurrencyNotFoundError,
+    InsufficientFundsError,
 )
+from .models import Portfolio, User, Wallet
+from .utils import confirm_action, make_rate_cache, timed
 
 USERS_FILE = "users.json"
 PORTFOLIOS_FILE = "portfolios.json"
 RATES_FILE = "rates.json"
 
-MAX_RATE_AGE = timedelta(minutes=5)
 
-# Замыкание-кэш в памяти (ttl=300 c)
-_cached_get, _cached_put, _cached_clear = make_rate_cache(ttl_seconds=300)
+def _db() -> DatabaseManager:
+    return DatabaseManager()
+
+
+def _settings() -> SettingsLoader:
+    return SettingsLoader()
+
+
+def _rates_ttl() -> timedelta:
+    return timedelta(seconds=int(_settings().get("RATES_TTL_SECONDS", 300)))
+
+
+# Замыкание-кэш в памяти (TTL берётся из настроек при импорте)
+_cached_get, _cached_put, _cached_clear = make_rate_cache(
+    ttl_seconds=int(_settings().get("RATES_TTL_SECONDS", 300))
+)
 
 
 # users
 def _load_users() -> list[dict]:
-    return load_json(USERS_FILE, [])
-
-
-def _save_users(users: list[dict]) -> None:
-    save_json(USERS_FILE, users)
+    return _db().load(USERS_FILE, [])
 
 
 def _find_user(username: str) -> Optional[User]:
@@ -44,7 +56,7 @@ def _username_taken(username: str) -> bool:
     return any(u["username"] == username for u in _load_users())
 
 
-@log_action
+@log_action(action="REGISTER")
 def register_user(username: str, password: str) -> User:
     if not isinstance(username, str) or not username.strip():
         raise ValueError("Имя пользователя не может быть пустым")
@@ -57,15 +69,17 @@ def register_user(username: str, password: str) -> User:
     new_id = max((u["user_id"] for u in users), default=0) + 1
     user = User.create(new_id, username, password)
     users.append(user.to_dict())
-    _save_users(users)
+    _db().save(USERS_FILE, users)
 
-    portfolios = load_json(PORTFOLIOS_FILE, [])
-    portfolios.append({"user_id": new_id, "wallets": {}})
-    save_json(PORTFOLIOS_FILE, portfolios)
+    _db().mutate(
+        PORTFOLIOS_FILE,
+        lambda data: data + [{"user_id": new_id, "wallets": {}}],
+        default=[],
+    )
     return user
 
 
-@log_action
+@log_action(action="LOGIN")
 def authenticate(username: str, password: str) -> User:
     user = _find_user(username)
     if user is None:
@@ -75,31 +89,22 @@ def authenticate(username: str, password: str) -> User:
     return user
 
 
-# portfolio
-def _load_portfolios() -> list[dict]:
-    return load_json(PORTFOLIOS_FILE, [])
-
-
-def _save_portfolios(portfolios: list[dict]) -> None:
-    save_json(PORTFOLIOS_FILE, portfolios)
-
-
+# portfolio 
 def load_portfolio(user: User) -> Portfolio:
-    for row in _load_portfolios():
+    portfolios = _db().load(PORTFOLIOS_FILE, [])
+    for row in portfolios:
         if row["user_id"] == user.user_id:
             wallets = {
                 code: Wallet.from_dict({"currency_code": code, **w})
                 for code, w in row["wallets"].items()
             }
             return Portfolio(user.user_id, wallets, user=user)
-    # если портфеля нет — создаём и сохраняем пустой
     pf = Portfolio(user.user_id, user=user)
     save_portfolio(pf)
     return pf
 
 
 def save_portfolio(portfolio: Portfolio) -> None:
-    portfolios = _load_portfolios()
     payload = {
         "user_id": portfolio.user_id,
         "wallets": {
@@ -107,31 +112,27 @@ def save_portfolio(portfolio: Portfolio) -> None:
             for code, w in portfolio.wallets.items()
         },
     }
-    for i, row in enumerate(portfolios):
-        if row["user_id"] == portfolio.user_id:
-            portfolios[i] = payload
-            break
-    else:
-        portfolios.append(payload)
-    _save_portfolios(portfolios)
+
+    def _updater(data: list[dict]) -> list[dict]:
+        for i, row in enumerate(data):
+            if row["user_id"] == portfolio.user_id:
+                data[i] = payload
+                return data
+        data.append(payload)
+        return data
+
+    _db().mutate(PORTFOLIOS_FILE, _updater, default=[])
 
 
 # rates
 _STUB_RATES = {
     "USD_USD": 1.0,
     "EUR_USD": 1.0786,
+    "GBP_USD": 1.27,
     "BTC_USD": 59337.21,
     "ETH_USD": 3720.00,
     "RUB_USD": 0.01016,
 }
-
-
-def _load_rates() -> dict:
-    return load_json(RATES_FILE, {})
-
-
-def _save_rates(rates: dict) -> None:
-    save_json(RATES_FILE, rates)
 
 
 def _stub_rate(frm: str, to: str) -> Optional[float]:
@@ -146,70 +147,67 @@ def _stub_rate(frm: str, to: str) -> Optional[float]:
     return None
 
 
-def known_currencies() -> set[str]:
-    codes: set[str] = set()
-    keys = list(_STUB_RATES) + [k for k in _load_rates() if "_" in k and k.isupper()]
-    for key in keys:
-        parts = key.split("_")
-        if len(parts) == 2 and all(parts):
-            codes.update(parts)
-    return codes
+def known_currencies() -> list[str]:
+    return list_codes()
 
 
 def is_known_currency(code: str) -> bool:
-    return bool(code) and code.upper() in known_currencies()
+    return is_known(code)
 
 
 @timed
 def get_rate(frm: str, to: str, force_refresh: bool = False) -> tuple[float, datetime]:
     """
     Возвращает (rate, updated_at).
-    1) Сначала смотрим in-memory кэш (замыкание).
-    2) Потом rates.json (если моложе MAX_RATE_AGE).
-    3) Иначе — «запрос к Parser Service» (заглушка) с обновлением файла и кэша.
+    Бросает:
+        CurrencyNotFoundError — неизвестный код валюты;
+        ApiRequestError        — не удалось получить курс.
     """
-    frm, to = (frm or "").upper(), (to or "").upper()
-    if not frm or not to:
-        raise ValueError("Коды валют не могут быть пустыми")
+    from_currency = get_currency(frm)
+    to_currency = get_currency(to)
+    from_code, to_code = from_currency.code, to_currency.code
+    key = f"{from_code}_{to_code}"
 
-    key = f"{frm}_{to}"
     if not force_refresh:
         hit = _cached_get(key)
         if hit is not None:
-            return hit  # (rate, ts)
+            return hit
 
-    rates = _load_rates()
+    rates = _db().load(RATES_FILE, {})
     if not force_refresh and key in rates:
         try:
             ts = datetime.fromisoformat(rates[key]["updated_at"])
         except (KeyError, ValueError):
             ts = None
-        if ts and (datetime.now() - ts) < MAX_RATE_AGE:
+        if ts and (datetime.now() - ts) < _rates_ttl():
             rate = float(rates[key]["rate"])
             _cached_put(key, rate, ts)
             return rate, ts
 
-    rate = _stub_rate(frm, to)
+    rate = _stub_rate(from_code, to_code)
     if rate is None:
-        raise LookupError(f"Курс {frm}→{to} недоступен. Повторите попытку позже.")
+        raise ApiRequestError(f"курс {from_code}→{to_code} недоступен")
 
     now = datetime.now()
-    rates[key] = {"rate": rate, "updated_at": now.isoformat()}
-    rates["last_refresh"] = now.isoformat()
-    rates["source"] = "StubParser"
-    _save_rates(rates)
+    entry = {"rate": rate, "updated_at": now.isoformat(timespec="seconds")}
+
+    def _updater(data: dict) -> dict:
+        data[key] = entry
+        data["last_refresh"] = now.isoformat(timespec="seconds")
+        data["source"] = "ParserService"
+        return data
+
+    _db().mutate(RATES_FILE, _updater, default={})
     _cached_put(key, rate, now)
     return rate, now
 
 
 # buy / sell
-@log_action
+@log_action(action="BUY", verbose=True)
 def buy_currency(user: User, currency_code: str, amount: float) -> dict:
     if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
         raise ValueError("'amount' должен быть положительным числом")
-    code = (currency_code or "").upper().strip()
-    if not code:
-        raise ValueError("Код валюты не может быть пустым")
+    code = get_currency(currency_code).code  # CurrencyNotFoundError при неизвестном
 
     portfolio = load_portfolio(user)
     wallet = portfolio.get_wallet(code) or portfolio.add_currency(code)
@@ -222,11 +220,10 @@ def buy_currency(user: User, currency_code: str, amount: float) -> dict:
     try:
         rate, _ = get_rate(code, "USD")
         cost_usd = amount * rate
-    except LookupError:
+    except (CurrencyNotFoundError, ApiRequestError):
         pass
 
-    # при покупке сумма списывается с USD-кошелька.
-    # Делаем best-effort: если USD-кошелёк есть и баланса хватает — списываем.
+    # списание с USD (best-effort)
     usd_charged: Optional[float] = None
     if code != "USD" and cost_usd is not None:
         usd_wallet = portfolio.get_wallet("USD")
@@ -247,13 +244,11 @@ def buy_currency(user: User, currency_code: str, amount: float) -> dict:
 
 
 @confirm_action("Подтвердить продажу? (y/n): ")
-@log_action
+@log_action(action="SELL", verbose=True)
 def sell_currency(user: User, currency_code: str, amount: float) -> dict | None:
     if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
         raise ValueError("'amount' должен быть положительным числом")
-    code = (currency_code or "").upper().strip()
-    if not code:
-        raise ValueError("Код валюты не может быть пустым")
+    code = get_currency(currency_code).code
 
     portfolio = load_portfolio(user)
     wallet = portfolio.get_wallet(code)
@@ -264,17 +259,17 @@ def sell_currency(user: User, currency_code: str, amount: float) -> dict | None:
         )
 
     before = wallet.balance
-    wallet.withdraw(amount)
+    wallet.withdraw(amount)  # InsufficientFundsError, если мало
 
     rate: Optional[float] = None
     revenue_usd: Optional[float] = None
     try:
         rate, _ = get_rate(code, "USD")
         revenue_usd = amount * rate
-    except LookupError:
+    except (CurrencyNotFoundError, ApiRequestError):
         pass
 
-    # при продаже сумма начисляется на USD-кошелёк
+    # зачисление в USD (best-effort)
     usd_credited: Optional[float] = None
     if code != "USD" and revenue_usd is not None:
         usd_wallet = portfolio.get_wallet("USD") or portfolio.add_currency("USD")
